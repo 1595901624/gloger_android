@@ -289,7 +289,7 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                         log_count += 1;
                     }
                     Err(e) => {
-                        // warn!("解析日志失败: {}", e);
+                        warn!("解析日志失败: {}", e);
                     }
                 }
             }
