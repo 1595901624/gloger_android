@@ -1,204 +1,308 @@
-mod error;
-mod file_reader;
-mod glog_reader;
-mod proto;
+//! # CLog Reader 命令行工具
+//!
+//! 这是一个用于读取和解析 Glog 格式日志文件的命令行工具。
+//! 支持从 ZIP 压缩包中提取日志文件并解析输出。
+//!
+//! ## 使用方法
+//!
+//! ```bash
+//! # 基本用法：解析日志 ZIP 文件
+//! clog-reader -i <日志.zip>
+//!
+//! # 按日志类型过滤
+//! clog-reader -i <日志.zip> -t 0,1,2
+//!
+//! # 显示帮助信息
+//! clog-reader -h
+//! ```
 
-use anyhow::Result;
-use chrono::{TimeZone, Utc};
-use clap::Parser;
-use log::{error, info};
-use prost::Message;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Write, BufWriter};
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use log::{info, warn, error};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
-use crate::glog_reader::GlogReader;
-use crate::proto::clog::Log;
+use clog_reader::{
+    glog::{open_with_key, GlogReader},
+    proto::Log,
+    error::ReadResult,
+};
 
-/// 服务端私钥，用于 ECDH 解密
+/// 服务器私钥（用于解密加密的日志）
 const SVR_PRIV_KEY: &str = "1C74B66FCB1C54FD4386173CFAF3BC53C8DF6B89F799DE1A1E7CEBBC43CBFD38";
 
-/// CLog 加密日志文件读取器
+/// CLog Reader 命令行参数
 #[derive(Parser, Debug)]
 #[command(name = "clog-reader")]
-#[command(author = "Your Name")]
+#[command(author = "CLog Reader Team")]
 #[command(version = "0.1.0")]
-#[command(about = "读取并解密 CLog 加密日志文件", long_about = None)]
+#[command(about = "读取和解析 Glog 格式日志文件的工具", long_about = None)]
 struct Args {
-    /// 日志 ZIP 压缩包路径
-    #[arg(short = 'i', long = "input")]
+    /// 日志 ZIP 文件路径
+    #[arg(short = 'i', long = "input", required = true)]
     input: String,
 
-    /// 日志类型过滤（逗号分隔，例如 "0,1,2"）
+    /// 过滤日志类型（逗号分隔，如 0,1,2）
     #[arg(short = 't', long = "type", default_value = "")]
-    log_type: String,
+    log_types: String,
 
-    /// 输出文件路径
+    /// 输出文件路径（默认为当前目录下的 log_output.txt）
     #[arg(short = 'o', long = "output", default_value = "log_output.txt")]
     output: String,
 }
 
 fn main() -> Result<()> {
-    // 初始化日志记录器
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // 初始化日志
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp(None)
+        .init();
 
+    // 解析命令行参数
     let args = Args::parse();
 
     // 解析日志类型过滤器
-    let types: Vec<i32> = if args.log_type.is_empty() {
+    let types: Vec<i32> = if args.log_types.is_empty() {
         Vec::new()
     } else {
-        args.log_type
+        args.log_types
             .split(',')
-            .filter_map(|s| s.trim().parse().ok())
+            .filter_map(|s| s.trim().parse::<i32>().ok())
             .collect()
     };
 
-    info!("输入文件: {}", args.input);
-    info!("日志类型过滤: {:?}", types);
+    if !types.is_empty() {
+        info!("日志类型过滤器: {:?}", types);
+    }
 
-    // 创建临时目录用于解压
-    let temp_dir = TempDir::new()?;
-    info!("临时目录: {:?}", temp_dir.path());
+    // 创建临时目录
+    let temp_dir = tempfile::tempdir()
+        .context("创建临时目录失败")?;
+    let temp_path = temp_dir.path();
+    info!("临时目录路径: {}", temp_path.display());
 
-    // 解压日志文件
-    unzip(&args.input, temp_dir.path())?;
+    // 解压缩 ZIP 文件
+    unzip(&args.input, temp_path)
+        .context("解压缩失败")?;
 
-    // 查找所有日志文件
+    // 收集日志文件
     let mut log_files: Vec<PathBuf> = Vec::new();
-    log_files.extend(get_glog_files(temp_dir.path())?);
-    log_files.extend(get_mmap_files(temp_dir.path())?);
+    log_files.extend(get_glog_files(temp_path)?);
+    log_files.extend(get_mmap_files(temp_path)?);
 
     info!("找到 {} 个日志文件", log_files.len());
 
     // 创建输出文件
     let output_path = PathBuf::from(&args.output);
-    let mut output_file = File::create(&output_path)?;
+    let output_file = File::create(&output_path)
+        .context(format!("创建输出文件失败: {}", output_path.display()))?;
+    let mut writer = BufWriter::new(output_file);
 
     // 处理每个日志文件
     for log_file in &log_files {
-        info!("正在处理: {:?}", log_file);
-        if let Err(e) = read_logs(log_file, &types, &mut output_file) {
-            error!("处理 {:?} 时出错: {}", log_file, e);
+        info!("正在处理: {}", log_file.display());
+        match read_logs(log_file, &types, &mut writer) {
+            Ok(count) => {
+                info!("成功读取 {} 条日志", count);
+            }
+            Err(e) => {
+                error!("读取日志失败 {}: {}", log_file.display(), e);
+            }
         }
     }
 
-    info!("输出已写入: {:?}", output_path);
+    writer.flush()?;
+    info!("日志输出已保存到: {}", output_path.display());
+
     Ok(())
 }
 
-/// 解压 ZIP 文件到目标目录
+/// 解压缩 ZIP 文件
+///
+/// # Arguments
+/// * `zip_path` - ZIP 文件路径
+/// * `dest_dir` - 目标目录
+///
+/// # Returns
+/// 成功返回 Ok(())
 fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
-    let file = File::open(zip_path)?;
-    let mut archive = ZipArchive::new(file)?;
+    let file = File::open(zip_path)
+        .context(format!("无法打开 ZIP 文件: {}", zip_path))?;
+    
+    let mut archive = ZipArchive::new(file)
+        .context("无法读取 ZIP 文件")?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
+        
+        // 构造输出路径
+        let out_path = match file.enclosed_name() {
             Some(path) => dest_dir.join(path),
             None => continue,
         };
 
         if file.name().ends_with('/') {
-            fs::create_dir_all(&outpath)?;
+            // 创建目录
+            fs::create_dir_all(&out_path)?;
         } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    fs::create_dir_all(p)?;
+            // 创建父目录
+            if let Some(parent) = out_path.parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent)?;
                 }
             }
-            let mut outfile = File::create(&outpath)?;
-            std::io::copy(&mut file, &mut outfile)?;
+            
+            // 提取文件
+            let mut out_file = File::create(&out_path)?;
+            std::io::copy(&mut file, &mut out_file)?;
         }
     }
 
+    info!("解压缩完成，共 {} 个文件", archive.len());
     Ok(())
 }
 
-/// 获取所有匹配 async-YYYYMMDD.glog 模式的 .glog 文件
-fn get_glog_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = WalkDir::new(dir)
+/// 获取目录下所有 .glog 文件
+///
+/// 按文件名中的日期排序（升序）
+///
+/// # Arguments
+/// * `dir_path` - 目录路径
+///
+/// # Returns
+/// 返回排序后的文件路径列表
+fn get_glog_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = WalkDir::new(dir_path)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let name = e.file_name().to_string_lossy();
-            name.ends_with(".glog") && is_async_glog_file(&name)
+            name.ends_with(".glog") && 
+            name.starts_with("async-") &&
+            name.len() >= 18 // async-YYYYMMdd.glog
         })
         .map(|e| e.path().to_path_buf())
         .collect();
 
-    // 按文件名中的日期降序排序
+    // 按日期排序（从文件名中提取日期）
     files.sort_by(|a, b| {
-        let name_a = a.file_name().unwrap().to_string_lossy();
-        let name_b = b.file_name().unwrap().to_string_lossy();
-        name_b.cmp(&name_a)
+        let date_a = extract_date_from_glog_name(a);
+        let date_b = extract_date_from_glog_name(b);
+        date_a.cmp(&date_b)
     });
 
     Ok(files)
 }
 
-/// 检查文件名是否匹配 async-YYYYMMDD.glog 模式
-fn is_async_glog_file(name: &str) -> bool {
-    if !name.starts_with("async-") || !name.ends_with(".glog") {
-        return false;
-    }
-    let date_part = &name[6..name.len() - 5];
-    date_part.len() == 8 && date_part.chars().all(|c| c.is_ascii_digit())
+/// 从 glog 文件名中提取日期
+///
+/// # Arguments
+/// * `path` - 文件路径
+///
+/// # Returns
+/// 返回日期字符串（YYYYMMdd）
+fn extract_date_from_glog_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| {
+            if n.len() >= 14 {
+                n[6..14].to_string() // 提取 YYYYMMdd
+            } else {
+                String::new()
+            }
+        })
+        .unwrap_or_default()
 }
 
-/// 获取所有 .glogmmap 文件
-fn get_mmap_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut files: Vec<PathBuf> = WalkDir::new(dir)
+/// 获取目录下所有 .glogmmap 文件
+///
+/// 按最后修改时间排序（降序）
+///
+/// # Arguments
+/// * `dir_path` - 目录路径
+///
+/// # Returns
+/// 返回排序后的文件路径列表
+fn get_mmap_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
+    let mut files: Vec<(PathBuf, std::time::SystemTime)> = WalkDir::new(dir_path)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .filter(|e| e.file_name().to_string_lossy().ends_with(".glogmmap"))
-        .map(|e| e.path().to_path_buf())
+        .filter_map(|e| {
+            let path = e.path().to_path_buf();
+            e.metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|time| (path, time))
+        })
         .collect();
 
     // 按修改时间降序排序
-    files.sort_by(|a, b| {
-        let time_a = fs::metadata(a).and_then(|m| m.modified()).ok();
-        let time_b = fs::metadata(b).and_then(|m| m.modified()).ok();
-        time_b.cmp(&time_a)
-    });
+    files.sort_by(|a, b| b.1.cmp(&a.1));
 
-    Ok(files)
+    Ok(files.into_iter().map(|(path, _)| path).collect())
 }
 
-/// 从文件中读取并解析日志
-fn read_logs(file_path: &Path, types: &[i32], output: &mut File) -> Result<()> {
-    let mut reader = GlogReader::new(file_path, Some(SVR_PRIV_KEY))?;
-    let mut log_num = 0;
-    let mut buf = vec![0u8; glog_reader::SINGLE_LOG_CONTENT_MAX_LENGTH];
+/// 读取日志文件
+///
+/// # Arguments
+/// * `file_path` - 日志文件路径
+/// * `types` - 日志类型过滤器
+/// * `writer` - 输出写入器
+///
+/// # Returns
+/// 返回读取的日志条数
+fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Result<usize> {
+    let file_path_str = file_path.to_string_lossy().to_string();
+    
+    // 使用私钥打开日志文件
+    let mut reader = open_with_key(&file_path_str, Some(SVR_PRIV_KEY.to_string()))
+        .context(format!("打开日志文件失败: {}", file_path.display()))?;
+
+    let mut log_count = 0;
+    let buf_len = GlogReader::single_log_max_length();
+    let mut buf = vec![0u8; buf_len];
 
     loop {
         match reader.read(&mut buf) {
-            Ok(len) if len > 0 => {
-                let content = &buf[..len];
-                log_num += 1;
+            Ok(ReadResult::Success(len)) => {
+                if len == 0 {
+                    continue;
+                }
 
-                // 解码 protobuf
-                match Log::decode(content) {
+                // 解析 protobuf 日志
+                match Log::decode_from(&buf[..len]) {
                     Ok(log) => {
-                        // 如果指定了类型则进行过滤
-                        if types.is_empty() || types.contains(&log.r#type) {
-                            let formatted = format_log(&log);
-                            writeln!(output, "{}", formatted)?;
+                        // 检查类型过滤
+                        if !types.is_empty() && !types.contains(&log.log_type) {
+                            continue;
                         }
+
+                        // 格式化并写入日志
+                        let formatted = log.format();
+                        writeln!(writer, "{}", formatted)?;
+                        log_count += 1;
                     }
                     Err(e) => {
-                        error!("解码日志 {} 失败: {}", log_num, e);
+                        // warn!("解析日志失败: {}", e);
                     }
                 }
             }
-            Ok(_) => {
-                // len <= 0，文件结束或错误
+            Ok(ReadResult::Eof) => {
+                info!("读取完成");
                 break;
+            }
+            Ok(ReadResult::NeedRecover(code)) => {
+                warn!("需要恢复，错误码: {}", code);
+                if code == -1 {
+                    break;
+                }
+                continue;
             }
             Err(e) => {
                 error!("读取错误: {}", e);
@@ -207,39 +311,6 @@ fn read_logs(file_path: &Path, types: &[i32], output: &mut File) -> Result<()> {
         }
     }
 
-    info!("从 {:?} 处理的日志总数: {}", file_path, log_num);
-    Ok(())
-}
-
-/// 将日志条目格式化为人类可读的字符串
-fn format_log(log: &Log) -> String {
-    let timestamp = log
-        .timestamp
-        .parse::<i64>()
-        .map(|ts| {
-            Utc.timestamp_millis_opt(ts)
-                .single()
-                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string())
-                .unwrap_or_else(|| log.timestamp.clone())
-        })
-        .unwrap_or_else(|_| log.timestamp.clone());
-
-    let level = get_log_level(log.log_level);
-
-    format!(
-        "{} [{}] [{}] {{{}:{}}} -- {}",
-        timestamp, level, log.tag, log.pid, log.tid, log.msg
-    )
-}
-
-/// 获取日志级别字符串
-fn get_log_level(level: i32) -> &'static str {
-    match level {
-        0 => "Info",
-        1 => "Debug",
-        2 => "Verbose",
-        3 => "Warn",
-        4 => "Error",
-        _ => "Unknown",
-    }
+    info!("共读取 {} 条日志", log_count);
+    Ok(log_count)
 }

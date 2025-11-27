@@ -2,50 +2,65 @@
 name = "clog-reader"
 version = "0.1.0"
 edition = "2021"
-description = "CLog encrypted log file reader and decoder"
-authors = ["Your Name"]
+authors = ["CLog Reader Team"]
+description = "一个用于读取和解析 Glog 格式日志文件的 Rust 工具库"
+license = "MIT"
+
+[[bin]]
+name = "clog-reader"
+path = "src/main.rs"
+
+[lib]
+name = "clog_reader"
+path = "src/lib.rs"
 
 [dependencies]
-# Command line argument parsing
+# 命令行参数解析
 clap = { version = "4.4", features = ["derive"] }
 
-# ZIP file handling
-zip = "0.6"
-
-# Zlib decompression
-flate2 = "1.0"
-
-# Cryptography
-aes = "0.8"
-cfb-mode = "0.8"
-k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
-elliptic-curve = { version = "0.13", features = ["sec1"] }
-hex = "0.4"
-
-# Protobuf
-prost = "0.14.1"
-prost-types = "0.14.1"
-
-# Error handling
-anyhow = "1.0"
+# 错误处理
 thiserror = "1.0"
+anyhow = "1.0"
 
-# Byte manipulation
-byteorder = "1.5"
-bytes = "1.5"
-
-# Temp directory
-tempfile = "3.8"
-
-# Time formatting
-chrono = "0.4"
-
-# Logging
+# 日志输出
 log = "0.4"
 env_logger = "0.10"
 
-# File walking
+# 压缩解压 (zlib)
+flate2 = "1.0"
+
+# 加密相关
+aes = "0.8"
+cfb-mode = "0.8"
+cipher = "0.4"
+
+# 椭圆曲线加密 (secp256k1 ECDH)
+k256 = { version = "0.13", features = ["ecdh"] }
+elliptic-curve = { version = "0.13", features = ["sec1"] }
+
+# 字节处理
+hex = "0.4"
+byteorder = "1.5"
+
+# ZIP 解压
+zip = "0.6"
+
+# Protobuf 支持
+prost = "0.12"
+prost-types = "0.12"
+
+# 日期时间处理
+chrono = "0.4"
+
+# 文件遍历
 walkdir = "2.4"
 
+# 临时文件目录
+tempfile = "3.10"
+
 [build-dependencies]
-prost-build = "0.14.1"
+prost-build = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = true
