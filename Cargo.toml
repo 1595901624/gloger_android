@@ -1,0 +1,51 @@
+[package]
+name = "clog-reader"
+version = "0.1.0"
+edition = "2021"
+description = "CLog encrypted log file reader and decoder"
+authors = ["Your Name"]
+
+[dependencies]
+# Command line argument parsing
+clap = { version = "4.4", features = ["derive"] }
+
+# ZIP file handling
+zip = "0.6"
+
+# Zlib decompression
+flate2 = "1.0"
+
+# Cryptography
+aes = "0.8"
+cfb-mode = "0.8"
+k256 = { version = "0.13", features = ["ecdh", "arithmetic"] }
+elliptic-curve = { version = "0.13", features = ["sec1"] }
+hex = "0.4"
+
+# Protobuf
+prost = "0.14.1"
+prost-types = "0.14.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Byte manipulation
+byteorder = "1.5"
+bytes = "1.5"
+
+# Temp directory
+tempfile = "3.8"
+
+# Time formatting
+chrono = "0.4"
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+# File walking
+walkdir = "2.4"
+
+[build-dependencies]
+prost-build = "0.14.1"

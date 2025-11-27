@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package clog;
+
+// Log entry message
+message Log {
+    // Log type
+    int32 type = 1;
+    
+    // Timestamp in milliseconds
+    string timestamp = 2;
+    
+    // Log level
+    Level log_level = 3;
+    
+    // Process ID
+    int32 pid = 4;
+    
+    // Thread ID
+    string tid = 5;
+    
+    // Log tag
+    string tag = 6;
+    
+    // Log message content
+    string msg = 7;
+}
+
+// Log level enumeration
+enum Level {
+    INFO = 0;
+    DEBUG = 1;
+    VERBOSE = 2;
+    WARN = 3;
+    ERROR = 4;
+}
