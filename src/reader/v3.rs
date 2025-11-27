@@ -36,6 +36,12 @@
 //! |                              ...
 //! +-----------------------------------------------------------------+
 //! ```
+//!
+//! ## 重要说明
+//!
+//! Java 版本的实现使用有状态的 Inflater，在整个文件读取过程中保持 zlib 字典状态。
+//! 这意味着多个日志块实际上是作为一个连续的 deflate 流压缩的。
+//! 因此本实现也使用 `StatefulInflater` 来保持解压状态。
 
 use std::io::{Read, BufReader};
 use std::fs::File;
@@ -45,12 +51,16 @@ use crate::error::{GlogError, Result, ReadResult};
 use super::{
     FileReader, CompressMode, EncryptMode, 
     SYNC_MARKER, SINGLE_LOG_CONTENT_MAX_LENGTH,
-    read_safely, read_u16_le, decompress_raw,
+    read_safely, read_u16_le, StatefulInflater,
 };
 
 /// V3 版本文件读取器
 ///
 /// 实现了 Glog 恢复版本 (V3) 的日志读取功能
+///
+/// ## 解压状态
+///
+/// 内置有状态的解压器，模拟 Java 的 jzlib Inflater 行为
 pub struct FileReaderV3<R: Read> {
     /// 输入流
     input: R,
@@ -63,6 +73,8 @@ pub struct FileReaderV3<R: Read> {
     position: u64,
     /// 文件总大小
     size: u64,
+    /// 有状态的解压器（模拟 Java 的 Inflater 行为）
+    inflater: StatefulInflater,
 }
 
 impl FileReaderV3<BufReader<File>> {
@@ -82,6 +94,7 @@ impl FileReaderV3<BufReader<File>> {
             encrypt_mode: EncryptMode::None,
             position: 5, // 跳过魔数(4字节) + 版本(1字节)
             size,
+            inflater: StatefulInflater::new(),
         })
     }
 }
@@ -103,6 +116,7 @@ impl<R: Read> FileReaderV3<R> {
             encrypt_mode: EncryptMode::None,
             position: 5,
             size,
+            inflater: StatefulInflater::new(),
         }
     }
 
@@ -143,7 +157,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
             _ => return Err(GlogError::IllegalEncryptMode(ms & 0x0F)),
         }
 
-        info!("压缩模式: {:?}, 加密模式: {:?}", self.compress_mode, self.encrypt_mode);
+        // info!("压缩模式: {:?}, 加密模式: {:?}", self.compress_mode, self.encrypt_mode);
 
         // 读取协议名称长度
         let proto_name_len = read_u16_le(&mut self.input)?;
@@ -223,8 +237,8 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         // 根据压缩模式处理数据
         let final_length = match self.compress_mode {
             CompressMode::Zlib => {
-                // 解压缩数据
-                decompress_raw(&buf, out_buf)?
+                // 使用有状态的解压器解压数据
+                self.inflater.decompress(&buf, out_buf)?
             }
             CompressMode::None => {
                 // 直接复制数据
@@ -274,6 +288,7 @@ mod tests {
             encrypt_mode: EncryptMode::None,
             position: 0,
             size: 0,
+            inflater: StatefulInflater::new(),
         };
         
         // 日志长度(2) + 数据(10) + 同步标记(8) = 20

@@ -2,14 +2,27 @@
 //!
 //! 本模块定义了文件读取器的基础特征和共享功能，
 //! 包括读取辅助函数和解压缩功能。
+//!
+//! ## 重要说明
+//!
+//! Java 版本使用的 jzlib Inflater 具有以下特性：
+//! - 使用 `WrapperType.NONE` (raw deflate 格式，无 zlib/gzip 头部)
+//! - Inflater 对象在整个文件读取过程中复用，保持内部状态（字典等）
+//! - 每次调用使用 `Z_SYNC_FLUSH` 模式
+//!
+//! 这意味着多个日志块实际上是作为一个连续的 deflate 流压缩的，
+//! 因此 Rust 实现也需要使用有状态的流式解压器。
 
 pub mod v3;
 pub mod v4;
 
 use std::io::{Read, Cursor};
 use flate2::read::ZlibDecoder;
+use flate2::Decompress;
+use flate2::FlushDecompress;
+use flate2::Status;
 use crate::error::{GlogError, Result, ReadResult};
-use log::info;
+use log::{info, debug};
 
 /// 单条日志内容的最大长度 (16KB)
 pub const SINGLE_LOG_CONTENT_MAX_LENGTH: usize = 16 * 1024;
@@ -66,6 +79,112 @@ pub trait FileReader {
 
     /// 获取剩余可读取的字节数
     fn space_left(&self) -> u64;
+}
+
+/// 有状态的 Raw Deflate 解压器
+///
+/// 模拟 Java 的 jzlib Inflater 行为：
+/// - 使用 raw deflate 格式（无 zlib/gzip 头部）
+/// - 在多次调用之间保持内部状态（字典等）
+/// - 支持 SYNC_FLUSH 模式
+///
+/// # 设计说明
+///
+/// Java 的 Glog 实现将多个日志块作为一个连续的 deflate 流压缩，
+/// 每次写入后使用 SYNC_FLUSH 确保数据可以立即读取，但 zlib 字典等状态是持续的。
+/// 这个结构体复制了这种行为。
+pub struct StatefulInflater {
+    /// flate2 的底层解压器
+    decompressor: Decompress,
+    /// 累计输入字节数（用于调试）
+    total_in: u64,
+    /// 累计输出字节数（用于调试）
+    total_out: u64,
+}
+
+impl StatefulInflater {
+    /// 创建新的有状态解压器
+    ///
+    /// 使用 raw deflate 格式（对应 Java 的 WrapperType.NONE）
+    pub fn new() -> Self {
+        // false 表示 raw deflate（无 zlib 头部）
+        // 这对应 Java 的 JZlib.WrapperType.NONE
+        Self {
+            decompressor: Decompress::new(false),
+            total_in: 0,
+            total_out: 0,
+        }
+    }
+
+    /// 解压数据块
+    ///
+    /// 模拟 Java 的 `inflater.inflate(Z_SYNC_FLUSH)` 行为
+    ///
+    /// # Arguments
+    /// * `in_buf` - 输入的压缩数据
+    /// * `out_buf` - 输出缓冲区
+    ///
+    /// # Returns
+    /// 成功返回解压后的数据长度
+    pub fn decompress(&mut self, in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
+        let before_in = self.decompressor.total_in();
+        let before_out = self.decompressor.total_out();
+
+        // 使用 FlushDecompress::Sync 对应 Z_SYNC_FLUSH
+        let status = self.decompressor.decompress(
+            in_buf,
+            out_buf,
+            FlushDecompress::Sync
+        ).map_err(|e| GlogError::DecompressError(format!("decompress error: {}", e)))?;
+
+        let consumed = (self.decompressor.total_in() - before_in) as usize;
+        let produced = (self.decompressor.total_out() - before_out) as usize;
+
+        self.total_in += consumed as u64;
+        self.total_out += produced as u64;
+
+        debug!(
+            "解压: 输入 {} 字节 (已消费 {}), 输出 {} 字节, 状态: {:?}",
+            in_buf.len(),
+            consumed,
+            produced,
+            status
+        );
+
+        // 检查是否消费了所有输入
+        if consumed != in_buf.len() {
+            debug!(
+                "警告: 输入未完全消费: 提供 {} 字节, 消费 {} 字节",
+                in_buf.len(),
+                consumed
+            );
+        }
+
+        Ok(produced)
+    }
+
+    /// 重置解压器状态
+    ///
+    /// 在某些情况下需要重置（例如文件损坏后的恢复）
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        self.decompressor.reset(false);
+        info!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
+        self.total_in = 0;
+        self.total_out = 0;
+    }
+
+    /// 获取累计输入字节数
+    #[allow(dead_code)]
+    pub fn total_in(&self) -> u64 {
+        self.total_in
+    }
+
+    /// 获取累计输出字节数
+    #[allow(dead_code)]
+    pub fn total_out(&self) -> u64 {
+        self.total_out
+    }
 }
 
 /// 安全读取函数

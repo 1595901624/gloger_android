@@ -41,6 +41,12 @@
 //! |                              ...
 //! +-----------------------------------------------------------------+
 //! ```
+//!
+//! ## 重要说明
+//!
+//! Java 版本的实现使用有状态的 Inflater，在整个文件读取过程中保持 zlib 字典状态。
+//! 这意味着多个日志块实际上是作为一个连续的 deflate 流压缩的。
+//! 因此本实现也使用 `StatefulInflater` 来保持解压状态。
 
 use std::io::{Read, BufReader};
 use std::fs::File;
@@ -59,7 +65,7 @@ use crate::error::{GlogError, Result, ReadResult};
 use super::{
     FileReader, CompressMode, EncryptMode,
     SYNC_MARKER, SINGLE_LOG_CONTENT_MAX_LENGTH,
-    read_safely, read_u16_le, decompress_raw,
+    read_safely, read_u16_le, StatefulInflater,
 };
 
 /// AES CFB 解密器类型别名
@@ -69,6 +75,10 @@ type Aes128CfbDec = Decryptor<Aes128>;
 ///
 /// 实现了 Glog 加密版本 (V4) 的日志读取功能
 /// 支持 AES-128-CFB 加密和 zlib 压缩
+///
+/// ## 解压状态
+///
+/// 内置有状态的解压器，模拟 Java 的 jzlib Inflater 行为
 pub struct FileReaderV4<R: Read> {
     /// 输入流
     input: R,
@@ -80,6 +90,8 @@ pub struct FileReaderV4<R: Read> {
     position: u64,
     /// 文件总大小
     size: u64,
+    /// 有状态的解压器（模拟 Java 的 Inflater 行为）
+    inflater: StatefulInflater,
 }
 
 impl FileReaderV4<BufReader<File>> {
@@ -106,6 +118,7 @@ impl FileReaderV4<BufReader<File>> {
             svr_ec_pri_key,
             position: 5, // 跳过魔数(4字节) + 版本(1字节)
             size,
+            inflater: StatefulInflater::new(),
         })
     }
 }
@@ -134,6 +147,7 @@ impl<R: Read> FileReaderV4<R> {
             svr_ec_pri_key,
             position: 5,
             size,
+            inflater: StatefulInflater::new(),
         })
     }
 
@@ -275,7 +289,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             }
         };
 
-        info!("压缩模式: {:?}, 加密模式: {:?}", compress_mode, encrypt_mode);
+        // info!("压缩模式: {:?}, 加密模式: {:?}", compress_mode, encrypt_mode);
 
         // 如果需要解密但没有密钥，返回错误
         if encrypt_mode == EncryptMode::Aes && self.svr_pri_key.is_none() {
@@ -306,7 +320,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
             // 读取日志长度
             let log_length = read_u16_le(&mut self.input)? as usize;
-            info!("日志长度: {}", log_length);
+            // info!("日志长度: {}", log_length);
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
                 warn!("无效的日志长度: {}", log_length);
@@ -330,7 +344,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
             // 根据压缩模式处理数据
             match compress_mode {
-                CompressMode::Zlib => decompress_raw(&plain, out_buf)?,
+                CompressMode::Zlib => self.inflater.decompress(&plain, out_buf)?,
                 CompressMode::None => {
                     let copy_len = plain.len().min(out_buf.len());
                     out_buf[..copy_len].copy_from_slice(&plain[..copy_len]);
@@ -355,7 +369,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
             // 根据压缩模式处理数据
             match compress_mode {
-                CompressMode::Zlib => decompress_raw(&buf, out_buf)?,
+                CompressMode::Zlib => self.inflater.decompress(&buf, out_buf)?,
                 CompressMode::None => {
                     let copy_len = log_length.min(out_buf.len());
                     out_buf[..copy_len].copy_from_slice(&buf[..copy_len]);
