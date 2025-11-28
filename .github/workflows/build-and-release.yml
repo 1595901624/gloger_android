@@ -26,7 +26,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clog-reader-${{ matrix.os }}
-          path: target/release/clog-reader${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          # 将 path 改为通配，确保在各平台都能找到二进制
+          path: target/release/clog-reader*
 
   release:
     needs: build
@@ -51,12 +52,30 @@ jobs:
         with:
           path: artifacts
 
+      - name: Prepare release assets
+        run: |
+          # 在 artifacts/* 目录中查找并复制每个平台的二进制到 artifacts-release，并按平台重命名，保证唯一文件名
+          mkdir -p artifacts-release
+          for d in artifacts/*; do
+            if [ -d "$d" ]; then
+              base=$(basename "$d")
+              if [ -f "$d/clog-reader" ]; then
+                cp "$d/clog-reader" "artifacts-release/clog-reader-${base}"
+              fi
+              if [ -f "$d/clog-reader.exe" ]; then
+                cp "$d/clog-reader.exe" "artifacts-release/clog-reader-${base}.exe"
+              fi
+            fi
+          done
+          ls -lah artifacts-release
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ env.VERSION }}_Build_${{ env.TIMESTAMP }}
           name: Release ${{ env.VERSION }}_Build_${{ env.TIMESTAMP }}
-          files: artifacts/**/*
+          # 指向新准备好的唯一文件集合
+          files: artifacts-release/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
