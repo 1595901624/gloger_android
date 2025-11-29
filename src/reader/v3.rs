@@ -45,7 +45,7 @@
 
 use std::io::{Read, BufReader};
 use std::fs::File;
-use log::{info, warn};
+// use log::{info, warn};
 
 use crate::error::{GlogError, Result, ReadResult};
 use super::{
@@ -161,7 +161,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
 
         // 读取协议名称长度
         let proto_name_len = read_u16_le(&mut self.input)?;
-        info!("协议名称长度: {}", proto_name_len);
+        println!("协议名称长度: {}", proto_name_len);
 
         // 检查是否有足够的数据
         let required = proto_name_len as usize + 8;
@@ -177,7 +177,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         let mut name = vec![0u8; proto_name_len as usize];
         read_safely(&mut self.input, proto_name_len as usize, &mut name)?;
         let proto_name = String::from_utf8_lossy(&name);
-        info!("协议名称: {}", proto_name);
+        println!("协议名称: {}", proto_name);
 
         // 读取并验证同步标记
         let mut sync_marker = [0u8; 8];
@@ -189,7 +189,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
 
         // 更新位置：魔数(4) + 版本(1) + 模式(1) + 协议名称长度(2) + 协议名称 + 同步标记(8)
         self.position = 4 + 1 + 1 + 2 + proto_name_len as u64 + 8;
-        info!("读取头部完成，当前位置: {}", self.position);
+        println!("读取头部完成，当前位置: {}", self.position);
 
         Ok(())
     }
@@ -223,11 +223,11 @@ impl<R: Read> FileReader for FileReaderV3<R> {
 
         // 验证日志长度
         if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
-            warn!("无效的日志长度: {}，位置: {}", log_length, self.position);
+            eprintln!("无效的日志长度: {}，位置: {}", log_length, self.position);
             return Ok(ReadResult::NeedRecover(-2));
         }
 
-        info!("日志长度: {}", log_length);
+        println!("日志长度: {}", log_length);
 
         // 读取日志数据
         let mut buf = vec![0u8; log_length];
@@ -253,7 +253,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         read_safely(&mut self.input, 8, &mut sync_marker)?;
 
         if sync_marker != SYNC_MARKER {
-            warn!("同步标记不匹配，位置: {}", self.position);
+            eprintln!("同步标记不匹配，位置: {}", self.position);
             return Ok(ReadResult::NeedRecover(-3));
         }
         self.position += 8;

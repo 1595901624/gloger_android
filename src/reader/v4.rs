@@ -50,7 +50,7 @@
 
 use std::io::{Read, BufReader};
 use std::fs::File;
-use log::{info, warn};
+// use log::{info, warn};
 
 use aes::Aes128;
 use aes::cipher::AsyncStreamCipher;
@@ -234,7 +234,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         let mut name = vec![0u8; proto_name_len as usize];
         read_safely(&mut self.input, proto_name_len as usize, &mut name)?;
         let proto_name = String::from_utf8_lossy(&name);
-        info!("协议名称: {}", proto_name);
+        println!("协议名称: {}", proto_name);
 
         // 读取并验证同步标记
         let mut sync_marker = [0u8; 8];
@@ -246,7 +246,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
         // 更新位置：魔数(4) + 版本(1) + 协议名称长度(2) + 协议名称 + 同步标记(8)
         self.position = 4 + 1 + 2 + proto_name_len as u64 + 8;
-        info!("读取头部完成，当前位置: {}", self.position);
+        println!("读取头部完成，当前位置: {}", self.position);
 
         Ok(())
     }
@@ -274,7 +274,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             1 => CompressMode::None,
             2 => CompressMode::Zlib,
             _ => {
-                warn!("非法压缩模式: {}", ms >> 4);
+                eprintln!("非法压缩模式: {}", ms >> 4);
                 return Ok(ReadResult::NeedRecover(-2));
             }
         };
@@ -284,7 +284,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             1 => EncryptMode::None,
             2 => EncryptMode::Aes,
             _ => {
-                warn!("非法加密模式: {}", ms & 0x0F);
+                eprintln!("非法加密模式: {}", ms & 0x0F);
                 return Ok(ReadResult::NeedRecover(-3));
             }
         };
@@ -311,7 +311,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let client_pub_key = match decompress_public_key(&compressed_pub_key) {
                 Ok(key) => key,
                 Err(_) => {
-                    warn!("公钥解压失败");
+                    eprintln!("公钥解压失败");
                     return Ok(ReadResult::NeedRecover(-7));
                 }
             };
@@ -323,7 +323,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             // info!("日志长度: {}", log_length);
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
-                warn!("无效的日志长度: {}", log_length);
+                eprintln!("无效的日志长度: {}", log_length);
                 return Ok(ReadResult::NeedRecover(-4));
             }
 
@@ -337,7 +337,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let plain = match self.decrypt(&client_pub_key, &iv, &buf) {
                 Ok(p) => p,
                 Err(_) => {
-                    warn!("解密失败");
+                    eprintln!("解密失败");
                     return Ok(ReadResult::NeedRecover(-5));
                 }
             };
@@ -354,10 +354,10 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         } else {
             // 非加密模式
             let log_length = read_u16_le(&mut self.input)? as usize;
-            info!("日志长度: {}", log_length);
+            println!("日志长度: {}", log_length);
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
-                warn!("无效的日志长度: {}", log_length);
+                eprintln!("无效的日志长度: {}", log_length);
                 return Ok(ReadResult::NeedRecover(-6));
             }
 
@@ -383,7 +383,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         read_safely(&mut self.input, 8, &mut sync_marker)?;
 
         if sync_marker != SYNC_MARKER {
-            warn!("同步标记不匹配");
+            eprintln!("同步标记不匹配");
             return Ok(ReadResult::NeedRecover(-7));
         }
         self.position += 8;

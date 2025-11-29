@@ -20,9 +20,9 @@ use std::io::{Read, Cursor};
 use flate2::read::ZlibDecoder;
 use flate2::Decompress;
 use flate2::FlushDecompress;
-use flate2::Status;
+// use flate2::Status;
 use crate::error::{GlogError, Result, ReadResult};
-use log::{info, debug};
+// use log::{info, debug};
 
 /// 单条日志内容的最大长度 (16KB)
 pub const SINGLE_LOG_CONTENT_MAX_LENGTH: usize = 16 * 1024;
@@ -131,7 +131,7 @@ impl StatefulInflater {
         let before_out = self.decompressor.total_out();
 
         // 使用 FlushDecompress::Sync 对应 Z_SYNC_FLUSH
-        let status = self.decompressor.decompress(
+        let _ = self.decompressor.decompress(
             in_buf,
             out_buf,
             FlushDecompress::Sync
@@ -143,21 +143,21 @@ impl StatefulInflater {
         self.total_in += consumed as u64;
         self.total_out += produced as u64;
 
-        debug!(
-            "解压: 输入 {} 字节 (已消费 {}), 输出 {} 字节, 状态: {:?}",
-            in_buf.len(),
-            consumed,
-            produced,
-            status
-        );
+        // debug!(
+        //     "解压: 输入 {} 字节 (已消费 {}), 输出 {} 字节, 状态: {:?}",
+        //     in_buf.len(),
+        //     consumed,
+        //     produced,
+        //     status
+        // );
 
         // 检查是否消费了所有输入
         if consumed != in_buf.len() {
-            debug!(
-                "警告: 输入未完全消费: 提供 {} 字节, 消费 {} 字节",
-                in_buf.len(),
-                consumed
-            );
+            // debug!(
+            //     "警告: 输入未完全消费: 提供 {} 字节, 消费 {} 字节",
+            //     in_buf.len(),
+            //     consumed
+            // );
         }
 
         Ok(produced)
@@ -169,7 +169,7 @@ impl StatefulInflater {
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.decompressor.reset(false);
-        info!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
+        println!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
         self.total_in = 0;
         self.total_out = 0;
     }
@@ -266,7 +266,7 @@ pub fn decompress(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
         }
     }
     
-    info!("解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
+    println!("解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
     Ok(total_read)
 }
 
@@ -302,7 +302,7 @@ pub fn decompress_raw(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
         }
     }
     
-    info!("Raw 解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
+    println!("Raw 解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
     Ok(total_read)
 }
 

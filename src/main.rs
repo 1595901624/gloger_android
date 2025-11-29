@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use log::{info, warn, error};
+// use log::{info, warn, error};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -57,9 +57,9 @@ struct Args {
 
 fn main() -> Result<()> {
     // 初始化日志
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp(None)
-        .init();
+    // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    //     .format_timestamp(None)
+    //     .init();
 
     // 解析命令行参数
     let args = Args::parse();
@@ -75,14 +75,14 @@ fn main() -> Result<()> {
     };
 
     if !types.is_empty() {
-        info!("日志类型过滤器: {:?}", types);
+        println!("日志类型过滤器: {:?}", types);
     }
 
     // 创建临时目录
     let temp_dir = tempfile::tempdir()
         .context("创建临时目录失败")?;
     let temp_path = temp_dir.path();
-    info!("临时目录路径: {}", temp_path.display());
+    println!("临时目录路径: {}", temp_path.display());
 
     // 解压缩 ZIP 文件
     unzip(&args.input, temp_path)
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
     log_files.extend(get_glog_files(temp_path)?);
     log_files.extend(get_mmap_files(temp_path)?);
 
-    info!("找到 {} 个日志文件", log_files.len());
+    println!("找到 {} 个日志文件", log_files.len());
 
     // 创建输出文件
     let output_path = PathBuf::from(&args.output);
@@ -103,19 +103,19 @@ fn main() -> Result<()> {
 
     // 处理每个日志文件
     for log_file in &log_files {
-        info!("正在处理: {}", log_file.display());
+        println!("正在处理: {}", log_file.display());
         match read_logs(log_file, &types, &mut writer) {
             Ok(count) => {
-                info!("成功读取 {} 条日志", count);
+                println!("成功读取 {} 条日志", count);
             }
             Err(e) => {
-                error!("读取日志失败 {}: {}", log_file.display(), e);
+                eprintln!("读取日志失败 {}: {}", log_file.display(), e);
             }
         }
     }
 
     writer.flush()?;
-    info!("日志输出已保存到: {}", output_path.display());
+    println!("日志输出已保存到: {}", output_path.display());
 
     Ok(())
 }
@@ -161,7 +161,7 @@ fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
         }
     }
 
-    info!("解压缩完成，共 {} 个文件", archive.len());
+    println!("解压缩完成，共 {} 个文件", archive.len());
     Ok(())
 }
 
@@ -289,28 +289,28 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                         log_count += 1;
                     }
                     Err(e) => {
-                        warn!("解析日志失败: {}", e);
+                        eprintln!("解析日志失败: {}", e);
                     }
                 }
             }
             Ok(ReadResult::Eof) => {
-                info!("读取完成");
+                println!("读取完成");
                 break;
             }
             Ok(ReadResult::NeedRecover(code)) => {
-                warn!("需要恢复，错误码: {}", code);
+                eprintln!("需要恢复，错误码: {}", code);
                 if code == -1 {
                     break;
                 }
                 continue;
             }
             Err(e) => {
-                error!("读取错误: {}", e);
+                eprintln!("读取错误: {}", e);
                 break;
             }
         }
     }
 
-    info!("共读取 {} 条日志", log_count);
+    println!("共读取 {} 条日志", log_count);
     Ok(log_count)
 }

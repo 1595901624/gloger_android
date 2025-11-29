@@ -23,8 +23,8 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # 日志输出
-log = "0.4"
-env_logger = "0.10"
+# log = "0.4"
+# env_logger = "0.10"
 
 # 压缩解压 (zlib)
 flate2 = "1.0"
@@ -40,14 +40,14 @@ elliptic-curve = { version = "0.13", features = ["sec1"] }
 
 # 字节处理
 hex = "0.4"
-byteorder = "1.5"
+#byteorder = "1.5"
 
 # ZIP 解压
 zip = "0.6"
 
 # Protobuf 支持
 prost = "0.12"
-prost-types = "0.12"
+#prost-types = "0.12"
 
 # 日期时间处理
 chrono = "0.4"
@@ -58,8 +58,8 @@ walkdir = "2.4"
 # 临时文件目录
 tempfile = "3.10"
 
-[build-dependencies]
-prost-build = "0.12"
+#[build-dependencies]
+#prost-build = "0.12"
 
 [profile.release]
 opt-level = 3
