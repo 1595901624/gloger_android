@@ -274,7 +274,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             1 => CompressMode::None,
             2 => CompressMode::Zlib,
             _ => {
-                eprintln!("非法压缩模式: {}", ms >> 4);
+                // eprintln!("非法压缩模式: {}", ms >> 4);
                 return Ok(ReadResult::NeedRecover(-2));
             }
         };
@@ -284,7 +284,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             1 => EncryptMode::None,
             2 => EncryptMode::Aes,
             _ => {
-                eprintln!("非法加密模式: {}", ms & 0x0F);
+                // eprintln!("非法加密模式: {}", ms & 0x0F);
                 return Ok(ReadResult::NeedRecover(-3));
             }
         };

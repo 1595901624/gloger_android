@@ -19,7 +19,7 @@
 use std::fs::{self, File};
 use std::io::{Write, BufWriter};
 use std::path::{Path, PathBuf};
-
+use std::process::exit;
 use anyhow::{Context, Result};
 use clap::Parser;
 // use log::{info, warn, error};
@@ -288,8 +288,8 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                         writeln!(writer, "{}", formatted)?;
                         log_count += 1;
                     }
-                    Err(e) => {
-                        eprintln!("解析日志失败: {}", e);
+                    Err(_) => {
+                        // eprintln!("解析日志失败: {}", e);
                     }
                 }
             }
@@ -298,7 +298,7 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                 break;
             }
             Ok(ReadResult::NeedRecover(code)) => {
-                eprintln!("需要恢复，错误码: {}", code);
+                // eprintln!("需要恢复，错误码: {}", code);
                 if code == -1 {
                     break;
                 }
@@ -312,5 +312,6 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
     }
 
     println!("共读取 {} 条日志", log_count);
-    Ok(log_count)
+    // Ok(log_count)
+    exit(0)
 }
