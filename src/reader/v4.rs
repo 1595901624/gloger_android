@@ -60,6 +60,7 @@ use k256::{
     PublicKey, SecretKey,
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
 };
+use std::collections::HashMap;
 
 use crate::error::{GlogError, Result, ReadResult};
 use super::{
@@ -92,6 +93,8 @@ pub struct FileReaderV4<R: Read> {
     size: u64,
     /// 有状态的解压器（模拟 Java 的 Inflater 行为）
     inflater: StatefulInflater,
+    /// ECDH 共享密钥缓存（压缩公钥 -> 共享密钥）
+    shared_key_cache: HashMap<[u8; 33], Vec<u8>>,
 }
 
 impl FileReaderV4<BufReader<File>> {
@@ -119,6 +122,7 @@ impl FileReaderV4<BufReader<File>> {
             position: 5, // 跳过魔数(4字节) + 版本(1字节)
             size,
             inflater: StatefulInflater::new(),
+            shared_key_cache: HashMap::new(),
         })
     }
 }
@@ -148,6 +152,7 @@ impl<R: Read> FileReaderV4<R> {
             position: 5,
             size,
             inflater: StatefulInflater::new(),
+            shared_key_cache: HashMap::new(),
         })
     }
 
@@ -165,20 +170,56 @@ impl<R: Read> FileReaderV4<R> {
         1 + 2 + len + 8 + if cipher { 16 + 33 } else { 0 }
     }
 
+    /// 获取 ECDH 共享密钥（使用压缩公钥作为缓存 key）
+    ///
+    /// # Arguments
+    /// * `compressed_pub_key` - 压缩的客户端公钥（33字节）
+    ///
+    /// # Returns
+    /// 返回共享密钥的字节数组
+    fn get_shared_key_cached(&mut self, compressed_pub_key: &[u8; 33]) -> Result<Vec<u8>> {
+        // 检查缓存
+        if let Some(cached_key) = self.shared_key_cache.get(compressed_pub_key) {
+            return Ok(cached_key.clone());
+        }
+
+        let svr_key = self.svr_ec_pri_key.as_ref()
+            .ok_or(GlogError::CipherNotReady)?;
+
+        // 解压缩公钥
+        let client_pub_key = decompress_public_key(compressed_pub_key)?;
+
+        // 将客户端公钥转换为 PublicKey
+        let client_ec_pub_key = prepare_client_pub_key(&client_pub_key)?;
+
+        // 执行 ECDH 密钥交换
+        let shared_secret = k256::ecdh::diffie_hellman(
+            svr_key.to_nonzero_scalar(),
+            client_ec_pub_key.as_affine()
+        );
+
+        let key_bytes = shared_secret.raw_secret_bytes().to_vec();
+
+        // 缓存结果
+        self.shared_key_cache.insert(*compressed_pub_key, key_bytes.clone());
+
+        Ok(key_bytes)
+    }
+
     /// 解密数据
     ///
     /// 使用 ECDH 共享密钥和 AES-128-CFB 算法解密数据
     ///
     /// # Arguments
-    /// * `client_pub_key` - 客户端公钥（64字节，未压缩格式，不含前缀）
+    /// * `compressed_pub_key` - 压缩的客户端公钥（33字节）
     /// * `iv` - 初始化向量（16字节）
     /// * `encrypt` - 加密的数据
     ///
     /// # Returns
     /// 返回解密后的数据
-    fn decrypt(&self, client_pub_key: &[u8], iv: &[u8], encrypt: &[u8]) -> Result<Vec<u8>> {
-        // 获取共享密钥
-        let aes_key = self.get_shared_key(client_pub_key)?;
+    fn decrypt(&mut self, compressed_pub_key: &[u8; 33], iv: &[u8], encrypt: &[u8]) -> Result<Vec<u8>> {
+        // 获取共享密钥（使用压缩公钥缓存）
+        let aes_key = self.get_shared_key_cached(compressed_pub_key)?;
         
         // 只使用前16字节作为 AES-128 密钥
         let key_bytes: [u8; 16] = aes_key[..16]
@@ -196,30 +237,6 @@ impl<R: Read> FileReaderV4<R> {
 
         Ok(plain)
     }
-
-    /// 获取 ECDH 共享密钥
-    ///
-    /// # Arguments
-    /// * `client_pub_key` - 客户端公钥（64字节）
-    ///
-    /// # Returns
-    /// 返回共享密钥的字节数组
-    fn get_shared_key(&self, client_pub_key: &[u8]) -> Result<Vec<u8>> {
-        let svr_key = self.svr_ec_pri_key.as_ref()
-            .ok_or(GlogError::CipherNotReady)?;
-
-        // 将客户端公钥转换为 PublicKey
-        let client_ec_pub_key = prepare_client_pub_key(client_pub_key)?;
-
-        // 执行 ECDH 密钥交换
-        // 使用 diffie_hellman 直接计算共享密钥
-        let shared_secret = k256::ecdh::diffie_hellman(
-            svr_key.to_nonzero_scalar(),
-            client_ec_pub_key.as_affine()
-        );
-
-        Ok(shared_secret.raw_secret_bytes().to_vec())
-    }
 }
 
 impl<R: Read> FileReader for FileReaderV4<R> {
@@ -233,8 +250,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         // 读取协议名称
         let mut name = vec![0u8; proto_name_len as usize];
         read_safely(&mut self.input, proto_name_len as usize, &mut name)?;
-        let proto_name = String::from_utf8_lossy(&name);
-        println!("协议名称: {}", proto_name);
+        let _proto_name = String::from_utf8_lossy(&name);
 
         // 读取并验证同步标记
         let mut sync_marker = [0u8; 8];
@@ -246,7 +262,6 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
         // 更新位置：魔数(4) + 版本(1) + 协议名称长度(2) + 协议名称 + 同步标记(8)
         self.position = 4 + 1 + 2 + proto_name_len as u64 + 8;
-        println!("读取头部完成，当前位置: {}", self.position);
 
         Ok(())
     }
@@ -307,15 +322,6 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let mut compressed_pub_key = [0u8; 33];
             read_safely(&mut self.input, 33, &mut compressed_pub_key)?;
 
-            // 解压缩公钥
-            let client_pub_key = match decompress_public_key(&compressed_pub_key) {
-                Ok(key) => key,
-                Err(_) => {
-                    eprintln!("公钥解压失败");
-                    return Ok(ReadResult::NeedRecover(-7));
-                }
-            };
-
             self.position += 16 + 33;
 
             // 读取日志长度
@@ -333,8 +339,8 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let mut buf = vec![0u8; log_length];
             read_safely(&mut self.input, log_length, &mut buf)?;
 
-            // 解密数据
-            let plain = match self.decrypt(&client_pub_key, &iv, &buf) {
+            // 解密数据（直接使用压缩公钥）
+            let plain = match self.decrypt(&compressed_pub_key, &iv, &buf) {
                 Ok(p) => p,
                 Err(_) => {
                     eprintln!("解密失败");
@@ -354,7 +360,6 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         } else {
             // 非加密模式
             let log_length = read_u16_le(&mut self.input)? as usize;
-            println!("日志长度: {}", log_length);
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
                 eprintln!("无效的日志长度: {}", log_length);

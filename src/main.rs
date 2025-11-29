@@ -20,6 +20,7 @@ use std::fs::{self, File};
 use std::io::{Write, BufWriter};
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::Parser;
 // use log::{info, warn, error};
@@ -56,6 +57,8 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    let start_time = Instant::now();
+
     // 初始化日志
     // env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
     //     .format_timestamp(None)
@@ -117,7 +120,11 @@ fn main() -> Result<()> {
     writer.flush()?;
     println!("日志输出已保存到: {}", output_path.display());
 
-    Ok(())
+    let elapsed = start_time.elapsed();
+    println!("程序运行时间: {:.2}秒", elapsed.as_secs_f64());
+
+    // Ok(());
+    exit(0);
 }
 
 /// 解压缩 ZIP 文件
@@ -312,6 +319,5 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
     }
 
     println!("共读取 {} 条日志", log_count);
-    // Ok(log_count)
-    exit(0)
+    Ok(log_count)
 }

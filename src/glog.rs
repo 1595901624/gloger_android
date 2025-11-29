@@ -120,13 +120,11 @@ fn open_internal(file_path: &str, key: Option<String>) -> Result<Box<dyn FileRea
     if magic != MAGIC_NUMBER {
         return Err(GlogError::MagicMismatch);
     }
-    println!("魔数验证通过");
 
     // 读取版本号
     let mut version_buf = [0u8; 1];
     read_safely(&mut reader, 1, &mut version_buf)?;
     let version = version_buf[0];
-    println!("文件版本: 0x{:02X}", version);
 
     // 关闭当前读取器
     drop(reader);
