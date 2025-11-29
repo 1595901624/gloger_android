@@ -35,6 +35,9 @@ cargo build --release
 ### 命令行工具
 
 ```bash
+# 显示版本信息
+clog-reader --version
+
 # 基本用法：解析日志 ZIP 文件
 clog-reader -i <日志.zip>
 

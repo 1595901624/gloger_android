@@ -40,7 +40,7 @@ const SVR_PRIV_KEY: &str = "1C74B66FCB1C54FD4386173CFAF3BC53C8DF6B89F799DE1A1E7C
 #[derive(Parser, Debug)]
 #[command(name = "clog-reader")]
 #[command(author = "CLog Reader Team")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "读取和解析 Glog 格式日志文件的工具", long_about = None)]
 struct Args {
     /// 日志 ZIP 文件路径
