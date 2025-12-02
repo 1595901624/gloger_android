@@ -84,19 +84,27 @@ fn main() -> Result<()> {
     // 创建临时目录
     let temp_dir = tempfile::tempdir()
         .context("创建临时目录失败")?;
-    let temp_path = temp_dir.path();
+    let temp_path = temp_dir.path().to_path_buf();
     println!("临时目录路径: {}", temp_path.display());
 
     // 解压缩 ZIP 文件
-    unzip(&args.input, temp_path)
+    unzip(&args.input, &temp_path)
         .context("解压缩失败")?;
 
     // 收集日志文件
     let mut log_files: Vec<PathBuf> = Vec::new();
-    log_files.extend(get_glog_files(temp_path)?);
-    log_files.extend(get_mmap_files(temp_path)?);
+    log_files.extend(get_glog_files(&temp_path)?);
+    log_files.extend(get_mmap_files(&temp_path)?);
 
     println!("找到 {} 个日志文件", log_files.len());
+    
+    // 调试：如果没有找到日志文件，列出临时目录内容
+    if log_files.is_empty() {
+        println!("未找到日志文件，列出临时目录内容:");
+        for entry in WalkDir::new(&temp_path).into_iter().filter_map(|e| e.ok()) {
+            println!("  {}", entry.path().display());
+        }
+    }
 
     // 创建输出文件
     let output_path = PathBuf::from(&args.output);
