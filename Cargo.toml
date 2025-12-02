@@ -1,6 +1,6 @@
 [package]
 name = "clog-reader"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["CLog Reader Team"]
 description = "一个用于读取和解析 Glog 格式日志文件的 Rust 工具库"
