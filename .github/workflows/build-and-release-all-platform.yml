@@ -56,6 +56,11 @@ jobs:
         run: |
           mv target/${{ matrix.target }}/release/clog-reader${{ matrix.ext }} clog-reader-${{ matrix.target }}${{ matrix.ext }}
 
+      - name: Set executable permissions (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          chmod 777 clog-reader-${{ matrix.target }}${{ matrix.ext }}
+
       - name: Rename binary (Windows)
         if: runner.os == 'Windows'
         run: |
