@@ -48,26 +48,26 @@
 //! 这意味着多个日志块实际上是作为一个连续的 deflate 流压缩的。
 //! 因此本实现也使用 `StatefulInflater` 来保持解压状态。
 
-use std::io::{Read, BufReader};
 use std::fs::File;
+use std::io::{BufReader, Read, Write};
 // use log::{info, warn};
 
-use aes::Aes128;
 use aes::cipher::AsyncStreamCipher;
-use cfb_mode::Decryptor;
+use aes::Aes128;
 use cfb_mode::cipher::KeyIvInit;
+use cfb_mode::Decryptor;
 use k256::{
-    PublicKey, SecretKey,
-    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
+    elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint}, PublicKey,
+    SecretKey,
 };
 use std::collections::HashMap;
 
-use crate::error::{GlogError, Result, ReadResult};
 use super::{
-    FileReader, CompressMode, EncryptMode,
-    SYNC_MARKER, SINGLE_LOG_CONTENT_MAX_LENGTH,
-    read_safely, read_u16_le, StatefulInflater,
+    read_safely, read_u16_le, CompressMode,
+    EncryptMode, FileReader,
+    StatefulInflater, SINGLE_LOG_CONTENT_MAX_LENGTH, SYNC_MARKER,
 };
+use crate::error::{GlogError, ReadResult, Result};
 
 /// AES CFB 解密器类型别名
 type Aes128CfbDec = Decryptor<Aes128>;
@@ -166,7 +166,7 @@ impl<R: Read> FileReaderV4<R> {
     /// 返回包含所有字段的总存储大小
     #[allow(dead_code)]
     fn log_store_size(&self, len: usize, cipher: bool) -> usize {
-        // 模式(1) + 日志长度(2) + 日志数据 + 同步标记(8) + (如果加密: IV(16) + 压缩公钥(33))
+        // 模式(1) + 日志长度(2) + 日志数据 + 同步标记(8) + (如果加密: IV(16) + 压缩公��(33))
         1 + 2 + len + 8 + if cipher { 16 + 33 } else { 0 }
     }
 
@@ -330,6 +330,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
                 eprintln!("无效的日志长度: {}", log_length);
+                std::io::stderr().flush().unwrap();
                 return Ok(ReadResult::NeedRecover(-4));
             }
 
@@ -344,6 +345,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
                 Ok(p) => p,
                 Err(_) => {
                     eprintln!("解密失败");
+                    std::io::stderr().flush().unwrap();
                     return Ok(ReadResult::NeedRecover(-5));
                 }
             };
@@ -363,6 +365,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
                 eprintln!("无效的日志长度: {}", log_length);
+                std::io::stderr().flush().unwrap();
                 return Ok(ReadResult::NeedRecover(-6));
             }
 
@@ -389,6 +392,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
 
         if sync_marker != SYNC_MARKER {
             eprintln!("同步标记不匹配");
+            std::io::stderr().flush().unwrap();
             return Ok(ReadResult::NeedRecover(-7));
         }
         self.position += 8;

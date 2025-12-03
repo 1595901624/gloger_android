@@ -43,16 +43,16 @@
 //! 这意味着多个日志块实际上是作为一个连续的 deflate 流压缩的。
 //! 因此本实现也使用 `StatefulInflater` 来保持解压状态。
 
-use std::io::{Read, BufReader};
 use std::fs::File;
+use std::io::{BufReader, Read, Write};
 // use log::{info, warn};
 
-use crate::error::{GlogError, Result, ReadResult};
 use super::{
-    FileReader, CompressMode, EncryptMode, 
-    SYNC_MARKER, SINGLE_LOG_CONTENT_MAX_LENGTH,
-    read_safely, read_u16_le, StatefulInflater,
+    read_safely, read_u16_le, CompressMode,
+    EncryptMode, FileReader,
+    StatefulInflater, SINGLE_LOG_CONTENT_MAX_LENGTH, SYNC_MARKER,
 };
+use crate::error::{GlogError, ReadResult, Result};
 
 /// V3 版本文件读取器
 ///
@@ -162,6 +162,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         // 读取协议名称长度
         let proto_name_len = read_u16_le(&mut self.input)?;
         println!("协议名称长度: {}", proto_name_len);
+        std::io::stdout().flush().unwrap();
 
         // 检查是否有足够的数据
         let required = proto_name_len as usize + 8;
@@ -178,6 +179,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         read_safely(&mut self.input, proto_name_len as usize, &mut name)?;
         let proto_name = String::from_utf8_lossy(&name);
         println!("协议名称: {}", proto_name);
+        std::io::stdout().flush().unwrap();
 
         // 读取并验证同步标记
         let mut sync_marker = [0u8; 8];
@@ -190,6 +192,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         // 更新位置：魔数(4) + 版本(1) + 模式(1) + 协议名称长度(2) + 协议名称 + 同步标记(8)
         self.position = 4 + 1 + 1 + 2 + proto_name_len as u64 + 8;
         println!("读取头部完成，当前位置: {}", self.position);
+        std::io::stdout().flush().unwrap();
 
         Ok(())
     }
@@ -224,10 +227,12 @@ impl<R: Read> FileReader for FileReaderV3<R> {
         // 验证日志长度
         if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
             eprintln!("无效的日志长度: {}，位置: {}", log_length, self.position);
+            std::io::stderr().flush().unwrap();
             return Ok(ReadResult::NeedRecover(-2));
         }
 
         println!("日志长度: {}", log_length);
+        std::io::stdout().flush().unwrap();
 
         // 读取日志数据
         let mut buf = vec![0u8; log_length];
@@ -254,6 +259,7 @@ impl<R: Read> FileReader for FileReaderV3<R> {
 
         if sync_marker != SYNC_MARKER {
             eprintln!("同步标记不匹配，位置: {}", self.position);
+            std::io::stderr().flush().unwrap();
             return Ok(ReadResult::NeedRecover(-3));
         }
         self.position += 8;

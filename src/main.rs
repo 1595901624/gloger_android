@@ -17,7 +17,7 @@
 //! ```
 
 use std::fs::{self, File};
-use std::io::{Write, BufWriter};
+use std::io::{self, Write, BufWriter};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Instant;
@@ -79,6 +79,7 @@ fn main() -> Result<()> {
 
     if !types.is_empty() {
         println!("日志类型过滤器: {:?}", types);
+        io::stdout().flush().unwrap();
     }
 
     // 创建临时目录
@@ -86,6 +87,7 @@ fn main() -> Result<()> {
         .context("创建临时目录失败")?;
     let temp_path = temp_dir.path().to_path_buf();
     println!("临时目录路径: {}", temp_path.display());
+    io::stdout().flush().unwrap();
 
     // 解压缩 ZIP 文件
     unzip(&args.input, &temp_path)
@@ -97,12 +99,15 @@ fn main() -> Result<()> {
     log_files.extend(get_mmap_files(&temp_path)?);
 
     println!("找到 {} 个日志文件", log_files.len());
-    
+    io::stdout().flush().unwrap();
+
     // 调试：如果没有找到日志文件，列出临时目录内容
     if log_files.is_empty() {
         println!("未找到日志文件，列出临时目录内容:");
+        io::stdout().flush().unwrap();
         for entry in WalkDir::new(&temp_path).into_iter().filter_map(|e| e.ok()) {
             println!("  {}", entry.path().display());
+            io::stdout().flush().unwrap();
         }
     }
 
@@ -115,21 +120,26 @@ fn main() -> Result<()> {
     // 处理每个日志文件
     for log_file in &log_files {
         println!("正在处理: {}", log_file.display());
+        io::stdout().flush().unwrap();
         match read_logs(log_file, &types, &mut writer) {
             Ok(count) => {
                 println!("成功读取 {} 条日志", count);
+                io::stdout().flush().unwrap();
             }
             Err(e) => {
                 eprintln!("读取日志失败 {}: {}", log_file.display(), e);
+                io::stderr().flush().unwrap();
             }
         }
     }
 
     writer.flush()?;
     println!("日志输出已保存到: {}", output_path.display());
+    io::stdout().flush().unwrap();
 
     let elapsed = start_time.elapsed();
     println!("程序运行时间: {:.2}秒", elapsed.as_secs_f64());
+    io::stdout().flush().unwrap();
 
     // Ok(());
     exit(0);
@@ -177,6 +187,7 @@ fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
     }
 
     println!("解压缩完成，共 {} 个文件", archive.len());
+    io::stdout().flush().unwrap();
     Ok(())
 }
 
@@ -310,6 +321,7 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
             }
             Ok(ReadResult::Eof) => {
                 println!("读取完成");
+                io::stdout().flush().unwrap();
                 break;
             }
             Ok(ReadResult::NeedRecover(code)) => {
@@ -321,11 +333,13 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
             }
             Err(e) => {
                 eprintln!("读取错误: {}", e);
+                io::stderr().flush().unwrap();
                 break;
             }
         }
     }
 
     println!("共读取 {} 条日志", log_count);
+    io::stdout().flush().unwrap();
     Ok(log_count)
 }

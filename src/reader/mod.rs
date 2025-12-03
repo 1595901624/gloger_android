@@ -16,7 +16,7 @@
 pub mod v3;
 pub mod v4;
 
-use std::io::{Read, Cursor};
+use std::io::{self, Read, Cursor, Write};
 use flate2::read::ZlibDecoder;
 use flate2::Decompress;
 use flate2::FlushDecompress;
@@ -170,6 +170,7 @@ impl StatefulInflater {
     pub fn reset(&mut self) {
         self.decompressor.reset(false);
         println!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
+        io::stdout().flush().unwrap();
         self.total_in = 0;
         self.total_out = 0;
     }
@@ -267,6 +268,7 @@ pub fn decompress(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
     }
     
     println!("解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
+    io::stdout().flush().unwrap();
     Ok(total_read)
 }
 
@@ -303,6 +305,7 @@ pub fn decompress_raw(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
     }
     
     println!("Raw 解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
+    io::stdout().flush().unwrap();
     Ok(total_read)
 }
 
