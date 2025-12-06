@@ -142,7 +142,12 @@ fn main() -> Result<()> {
     io::stdout().flush().unwrap();
 
     // Ok(());
-    exit(0);
+    if cfg!(windows) {
+        // Windows 下自动退出
+        exit(0);
+    } else {
+        Ok(())
+    }
 }
 
 /// 解压缩 ZIP 文件
