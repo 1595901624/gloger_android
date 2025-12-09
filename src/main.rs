@@ -16,22 +16,42 @@
 //! clog-reader -h
 //! ```
 
+use anyhow::{Context, Result};
+use clap::Parser;
 use std::fs::{self, File};
-use std::io::{self, Write, BufWriter};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Instant;
-use anyhow::{Context, Result};
-use clap::Parser;
 // use log::{info, warn, error};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
 use clog_reader::{
+    error::ReadResult,
     glog::{open_with_key, GlogReader},
     proto::Log,
-    error::ReadResult,
 };
+
+/// 宏：打印到 stdout 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
+macro_rules! print_flush {
+    ($($arg:tt)*) => {{
+        let stdout = io::stdout();
+        let mut handle = stdout.lock();
+        writeln!(handle, $($arg)*).unwrap();
+        handle.flush().unwrap();
+    }};
+}
+
+/// 宏：打印到 stderr 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
+macro_rules! eprint_flush {
+    ($($arg:tt)*) => {{
+        let stderr = io::stderr();
+        let mut handle = stderr.lock();
+        writeln!(handle, $($arg)*).unwrap();
+        handle.flush().unwrap();
+    }};
+}
 
 /// 服务器私钥（用于解密加密的日志）
 const SVR_PRIV_KEY: &str = "1C74B66FCB1C54FD4386173CFAF3BC53C8DF6B89F799DE1A1E7CEBBC43CBFD38";
@@ -78,36 +98,29 @@ fn main() -> Result<()> {
     };
 
     if !types.is_empty() {
-        println!("日志类型过滤器: {:?}", types);
-        io::stdout().flush().unwrap();
+        print_flush!("日志类型过滤器: {:?}", types);
     }
 
     // 创建临时目录
-    let temp_dir = tempfile::tempdir()
-        .context("创建临时目录失败")?;
+    let temp_dir = tempfile::tempdir().context("创建临时目录失败")?;
     let temp_path = temp_dir.path().to_path_buf();
-    println!("临时目录路径: {}", temp_path.display());
-    io::stdout().flush().unwrap();
+    print_flush!("临时目录路径: {}", temp_path.display());
 
     // 解压缩 ZIP 文件
-    unzip(&args.input, &temp_path)
-        .context("解压缩失败")?;
+    unzip(&args.input, &temp_path).context("解压缩失败")?;
 
     // 收集日志文件
     let mut log_files: Vec<PathBuf> = Vec::new();
     log_files.extend(get_glog_files(&temp_path)?);
     log_files.extend(get_mmap_files(&temp_path)?);
 
-    println!("找到 {} 个日志文件", log_files.len());
-    io::stdout().flush().unwrap();
+    print_flush!("找到 {} 个日志文件", log_files.len());
 
     // 调试：如果没有找到日志文件，列出临时目录内容
     if log_files.is_empty() {
-        println!("未找到日志文件，列出临时目录内容:");
-        io::stdout().flush().unwrap();
+        print_flush!("未找到日志文件，列出临时目录内容:");
         for entry in WalkDir::new(&temp_path).into_iter().filter_map(|e| e.ok()) {
-            println!("  {}", entry.path().display());
-            io::stdout().flush().unwrap();
+            print_flush!("  {}", entry.path().display());
         }
     }
 
@@ -119,35 +132,25 @@ fn main() -> Result<()> {
 
     // 处理每个日志文件
     for log_file in &log_files {
-        println!("正在处理: {}", log_file.display());
-        io::stdout().flush().unwrap();
+        print_flush!("正在处理: {}", log_file.display());
         match read_logs(log_file, &types, &mut writer) {
             Ok(count) => {
-                println!("成功读取 {} 条日志", count);
-                io::stdout().flush().unwrap();
+                print_flush!("成功读取 {} 条日志", count);
             }
             Err(e) => {
-                eprintln!("读取日志失败 {}: {}", log_file.display(), e);
-                io::stderr().flush().unwrap();
+                eprint_flush!("读取日志失败 {}: {}", log_file.display(), e);
             }
         }
     }
 
     writer.flush()?;
-    println!("日志输出已保存到: {}", output_path.display());
-    io::stdout().flush().unwrap();
+    print_flush!("日志输出已保存到: {}", output_path.display());
 
     let elapsed = start_time.elapsed();
-    println!("程序运行时间: {:.2}秒", elapsed.as_secs_f64());
-    io::stdout().flush().unwrap();
+    print_flush!("程序运行时间: {:.2}秒", elapsed.as_secs_f64());
 
-    // Ok(());
-    if cfg!(windows) {
-        // Windows 下自动退出
-        exit(0);
-    } else {
-        Ok(())
-    }
+    // 统一使用 exit(0) 退出，确保所有资源正确释放后进程结束
+    exit(0);
 }
 
 /// 解压缩 ZIP 文件
@@ -159,15 +162,13 @@ fn main() -> Result<()> {
 /// # Returns
 /// 成功返回 Ok(())
 fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
-    let file = File::open(zip_path)
-        .context(format!("无法打开 ZIP 文件: {}", zip_path))?;
-    
-    let mut archive = ZipArchive::new(file)
-        .context("无法读取 ZIP 文件")?;
+    let file = File::open(zip_path).context(format!("无法打开 ZIP 文件: {}", zip_path))?;
+
+    let mut archive = ZipArchive::new(file).context("无法读取 ZIP 文件")?;
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        
+
         // 构造输出路径
         let out_path = match file.enclosed_name() {
             Some(path) => dest_dir.join(path),
@@ -184,15 +185,14 @@ fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
                     fs::create_dir_all(parent)?;
                 }
             }
-            
+
             // 提取文件
             let mut out_file = File::create(&out_path)?;
             std::io::copy(&mut file, &mut out_file)?;
         }
     }
 
-    println!("解压缩完成，共 {} 个文件", archive.len());
-    io::stdout().flush().unwrap();
+    print_flush!("解压缩完成，共 {} 个文件", archive.len());
     Ok(())
 }
 
@@ -212,9 +212,8 @@ fn get_glog_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
         .filter(|e| e.file_type().is_file())
         .filter(|e| {
             let name = e.file_name().to_string_lossy();
-            name.ends_with(".glog") && 
-            name.starts_with("async-") &&
-            name.len() >= 18 // async-YYYYMMdd.glog
+            name.ends_with(".glog") && name.starts_with("async-") && name.len() >= 18
+            // async-YYYYMMdd.glog
         })
         .map(|e| e.path().to_path_buf())
         .collect();
@@ -290,7 +289,7 @@ fn get_mmap_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
 /// 返回读取的日志条数
 fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Result<usize> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    
+
     // 使用私钥打开日志文件
     let mut reader = open_with_key(&file_path_str, Some(SVR_PRIV_KEY.to_string()))
         .context(format!("打开日志文件失败: {}", file_path.display()))?;
@@ -325,8 +324,7 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                 }
             }
             Ok(ReadResult::Eof) => {
-                println!("读取完成");
-                io::stdout().flush().unwrap();
+                print_flush!("读取完成");
                 break;
             }
             Ok(ReadResult::NeedRecover(code)) => {
@@ -337,14 +335,12 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                 continue;
             }
             Err(e) => {
-                eprintln!("读取错误: {}", e);
-                io::stderr().flush().unwrap();
+                eprint_flush!("读取错误: {}", e);
                 break;
             }
         }
     }
 
-    println!("共读取 {} 条日志", log_count);
-    io::stdout().flush().unwrap();
+    print_flush!("共读取 {} 条日志", log_count);
     Ok(log_count)
 }

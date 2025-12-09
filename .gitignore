@@ -20,3 +20,4 @@ Thumbs.db
 # 测试输出
 *.log
 log_output.txt
+temp/
