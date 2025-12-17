@@ -16,12 +16,13 @@
 pub mod v3;
 pub mod v4;
 
-use std::io::{self, Read, Cursor, Write};
+use std::io::{Read, Cursor, Write};
 use flate2::read::ZlibDecoder;
 use flate2::Decompress;
 use flate2::FlushDecompress;
 // use flate2::Status;
 use crate::error::{GlogError, Result, ReadResult};
+use crate::print_flush;
 // use log::{info, debug};
 
 /// 单条日志内容的最大长度 (16KB)
@@ -169,8 +170,7 @@ impl StatefulInflater {
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.decompressor.reset(false);
-        println!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
-        io::stdout().flush().unwrap();
+        print_flush!("解压器已重置, 之前累计: 输入 {} 字节, 输出 {} 字节", self.total_in, self.total_out);
         self.total_in = 0;
         self.total_out = 0;
     }
@@ -267,8 +267,7 @@ pub fn decompress(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
         }
     }
     
-    println!("解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
-    io::stdout().flush().unwrap();
+    print_flush!("解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
     Ok(total_read)
 }
 
@@ -304,8 +303,7 @@ pub fn decompress_raw(in_buf: &[u8], out_buf: &mut [u8]) -> Result<usize> {
         }
     }
     
-    println!("Raw 解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
-    io::stdout().flush().unwrap();
+    print_flush!("Raw 解压缩完成，输入 {} 字节，输出 {} 字节", in_buf.len(), total_read);
     Ok(total_read)
 }
 

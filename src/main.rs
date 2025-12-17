@@ -19,7 +19,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Write};
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::Instant;
@@ -31,27 +31,8 @@ use clog_reader::{
     error::ReadResult,
     glog::{open_with_key, GlogReader},
     proto::Log,
+    print_flush, eprint_flush,
 };
-
-/// 宏：打印到 stdout 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
-macro_rules! print_flush {
-    ($($arg:tt)*) => {{
-        let stdout = io::stdout();
-        let mut handle = stdout.lock();
-        writeln!(handle, $($arg)*).unwrap();
-        handle.flush().unwrap();
-    }};
-}
-
-/// 宏：打印到 stderr 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
-macro_rules! eprint_flush {
-    ($($arg:tt)*) => {{
-        let stderr = io::stderr();
-        let mut handle = stderr.lock();
-        writeln!(handle, $($arg)*).unwrap();
-        handle.flush().unwrap();
-    }};
-}
 
 /// 服务器私钥（用于解密加密的日志）
 const SVR_PRIV_KEY: &str = "1C74B66FCB1C54FD4386173CFAF3BC53C8DF6B89F799DE1A1E7CEBBC43CBFD38";

@@ -78,6 +78,24 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 库名称
 pub const NAME: &str = env!("CARGO_PKG_NAME");
 
+/// 宏：打印到 stdout 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
+#[macro_export]
+macro_rules! print_flush {
+    ($($arg:tt)*) => {{
+        let mut writer = std::io::LineWriter::new(std::io::stdout().lock());
+        writeln!(writer, $($arg)*).unwrap();
+    }};
+}
+
+/// 宏：打印到 stderr 并立即刷新，确保在 macOS 管道模式下输出能被及时捕获
+#[macro_export]
+macro_rules! eprint_flush {
+    ($($arg:tt)*) => {{
+        let mut writer = std::io::LineWriter::new(std::io::stderr().lock());
+        writeln!(writer, $($arg)*).unwrap();
+    }};
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -68,6 +68,7 @@ use super::{
     StatefulInflater, SINGLE_LOG_CONTENT_MAX_LENGTH, SYNC_MARKER,
 };
 use crate::error::{GlogError, ReadResult, Result};
+use crate::eprint_flush;
 
 /// AES CFB 解密器类型别名
 type Aes128CfbDec = Decryptor<Aes128>;
@@ -329,8 +330,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             // info!("日志长度: {}", log_length);
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
-                eprintln!("无效的日志长度: {}", log_length);
-                std::io::stderr().flush().unwrap();
+                eprint_flush!("无效的日志长度: {}", log_length);
                 return Ok(ReadResult::NeedRecover(-4));
             }
 
@@ -344,8 +344,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let plain = match self.decrypt(&compressed_pub_key, &iv, &buf) {
                 Ok(p) => p,
                 Err(_) => {
-                    eprintln!("解密失败");
-                    std::io::stderr().flush().unwrap();
+                    eprint_flush!("解密失败");
                     return Ok(ReadResult::NeedRecover(-5));
                 }
             };
@@ -364,8 +363,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
             let log_length = read_u16_le(&mut self.input)? as usize;
 
             if log_length == 0 || log_length > SINGLE_LOG_CONTENT_MAX_LENGTH {
-                eprintln!("无效的日志长度: {}", log_length);
-                std::io::stderr().flush().unwrap();
+                eprint_flush!("无效的日志长度: {}", log_length);
                 return Ok(ReadResult::NeedRecover(-6));
             }
 
@@ -391,8 +389,7 @@ impl<R: Read> FileReader for FileReaderV4<R> {
         read_safely(&mut self.input, 8, &mut sync_marker)?;
 
         if sync_marker != SYNC_MARKER {
-            eprintln!("同步标记不匹配");
-            std::io::stderr().flush().unwrap();
+            eprint_flush!("同步标记不匹配");
             return Ok(ReadResult::NeedRecover(-7));
         }
         self.position += 8;
