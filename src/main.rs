@@ -55,6 +55,14 @@ struct Args {
     /// 输出文件路径（默认为当前目录下的 log_output.txt）
     #[arg(short = 'o', long = "output", default_value = "log_output.txt")]
     output: String,
+
+    /// 按主进程和插件分开输出（在输出文件名后添加 _async / _plugin_async）
+    #[arg(long)]
+    split: bool,
+
+    /// 合并输出时按日志的毫秒时间戳升序排序（需在内存中暂存日志）
+    #[arg(long, conflicts_with = "split")]
+    sort_by_time: bool,
 }
 
 fn main() -> Result<()> {
@@ -105,16 +113,38 @@ fn main() -> Result<()> {
         }
     }
 
-    // 创建输出文件
+    // 默认合并输出；分开输出时，同一进程的归档和 mmap 使用同一个写入器。
     let output_path = PathBuf::from(&args.output);
-    let output_file = File::create(&output_path)
-        .context(format!("创建输出文件失败: {}", output_path.display()))?;
-    let mut writer = BufWriter::new(output_file);
+    let output_paths = if args.split {
+        vec![
+            grouped_output_path(&output_path, "async"),
+            grouped_output_path(&output_path, "plugin_async"),
+        ]
+    } else {
+        vec![output_path]
+    };
+    let mut writers = Vec::new();
+    for path in &output_paths {
+        let file = File::create(path)
+            .context(format!("创建输出文件失败: {}", path.display()))?;
+        writers.push(BufWriter::new(file));
+    }
+
+    let mut pending_logs = Vec::new();
 
     // 处理每个日志文件
     for log_file in &log_files {
         print_flush!("正在处理: {}", log_file.display());
-        match read_logs(log_file, &types, &mut writer) {
+        let writer_index = usize::from(args.split && is_plugin_log(log_file));
+        let result = read_logs(log_file, &types, |log| {
+            if args.sort_by_time {
+                pending_logs.push(log);
+            } else {
+                writeln!(writers[writer_index], "{}", log.format())?;
+            }
+            Ok(())
+        });
+        match result {
             Ok(count) => {
                 print_flush!("成功读取 {} 条日志", count);
             }
@@ -124,14 +154,56 @@ fn main() -> Result<()> {
         }
     }
 
-    writer.flush()?;
-    print_flush!("日志输出已保存到: {}", output_path.display());
+    if args.sort_by_time {
+        write_sorted_logs(&mut pending_logs, &mut writers[0])?;
+        print_flush!("已按时间戳排序输出 {} 条日志", pending_logs.len());
+    }
+
+    for (writer, path) in writers.iter_mut().zip(&output_paths) {
+        writer.flush()?;
+        print_flush!("日志输出已保存到: {}", path.display());
+    }
 
     let elapsed = start_time.elapsed();
     print_flush!("程序运行时间: {:.2}秒", elapsed.as_secs_f64());
 
     // 统一使用 exit(0) 退出，确保所有资源正确释放后进程结束
     exit(0);
+}
+
+/// 稳定排序整个日志记录，保留多行消息和相同时间戳的原始顺序。
+fn write_sorted_logs<W: Write>(logs: &mut [Log], writer: &mut W) -> Result<()> {
+    logs.sort_by_cached_key(|log| {
+        let timestamp = log.timestamp.parse::<i64>().ok();
+        (timestamp.is_none(), timestamp.unwrap_or_default())
+    });
+    let invalid_count = logs.iter().filter(|log| log.timestamp.parse::<i64>().is_err()).count();
+    if invalid_count > 0 {
+        eprint_flush!("{} 条日志的时间戳无效，已保留并放在输出末尾", invalid_count);
+    }
+    for log in logs {
+        writeln!(writer, "{}", log.format())?;
+    }
+    Ok(())
+}
+
+/// 仅按文件名区分插件，避免父目录名影响归类。
+fn is_plugin_log(path: &Path) -> bool {
+    path.file_name()
+        .map(|name| name.to_string_lossy().starts_with("plugin_"))
+        .unwrap_or(false)
+}
+
+/// 在扩展名前添加分组名称，并保留输出目录。
+fn grouped_output_path(path: &Path, group: &str) -> PathBuf {
+    let mut name = path.file_stem().unwrap_or_default().to_os_string();
+    name.push("_");
+    name.push(group);
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    path.with_file_name(name)
 }
 
 /// 解压缩 ZIP 文件
@@ -177,7 +249,7 @@ fn unzip(zip_path: &str, dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// 获取目录下所有 .glog 文件
+/// 获取目录下所有以 async-YYYYMMdd.glog 结尾的归档文件（支持插件前缀）
 ///
 /// 按文件名中的日期排序（升序）
 ///
@@ -191,11 +263,7 @@ fn get_glog_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-        .filter(|e| {
-            let name = e.file_name().to_string_lossy();
-            name.ends_with(".glog") && name.starts_with("async-") && name.len() >= 18
-            // async-YYYYMMdd.glog
-        })
+        .filter(|e| !extract_date_from_glog_name(e.path()).is_empty())
         .map(|e| e.path().to_path_buf())
         .collect();
 
@@ -209,7 +277,7 @@ fn get_glog_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// 从 glog 文件名中提取日期
+/// 从以 async-YYYYMMdd.glog 结尾的文件名中提取日期，忽略插件前缀
 ///
 /// # Arguments
 /// * `path` - 文件路径
@@ -219,14 +287,131 @@ fn get_glog_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
 fn extract_date_from_glog_name(path: &Path) -> String {
     path.file_name()
         .and_then(|n| n.to_str())
-        .map(|n| {
-            if n.len() >= 14 {
-                n[6..14].to_string() // 提取 YYYYMMdd
-            } else {
-                String::new()
-            }
-        })
+        .and_then(|n| n.strip_suffix(".glog"))
+        .and_then(|n| n.rsplit_once("async-"))
+        .map(|(_, date)| date)
+        .filter(|date| date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()))
+        .map(str::to_owned)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_sort_is_opt_in_and_conflicts_with_split() {
+        assert!(!Args::try_parse_from(["clog-reader", "-i", "logs.zip"]).unwrap().sort_by_time);
+        assert!(Args::try_parse_from(["clog-reader", "-i", "logs.zip", "--sort-by-time"]).unwrap().sort_by_time);
+        let error = Args::try_parse_from([
+            "clog-reader", "-i", "logs.zip", "--sort-by-time", "--split",
+        ]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn sorts_numeric_timestamps_stably_and_preserves_whole_messages() -> Result<()> {
+        let mut logs: Vec<Log> = [
+            ("10", "later"),
+            ("invalid", "invalid first"),
+            ("2", "main\ncontinued"),
+            ("2", "plugin"),
+            ("-1", "earliest"),
+            ("", "invalid second"),
+            ("9223372036854775808", "overflow"),
+        ].into_iter().map(|(timestamp, msg)| Log {
+            timestamp: timestamp.to_owned(),
+            msg: msg.to_owned(),
+            ..Log::default()
+        }).collect();
+        let mut output = Vec::new();
+        write_sorted_logs(&mut logs, &mut output)?;
+        assert_eq!(
+            logs.iter().map(|log| log.msg.as_str()).collect::<Vec<_>>(),
+            ["earliest", "main\ncontinued", "plugin", "later", "invalid first", "invalid second", "overflow"]
+        );
+        let expected: String = logs.iter().map(|log| format!("{}\n", log.format())).collect();
+        assert_eq!(output, expected.as_bytes());
+        write_sorted_logs(&mut [], &mut Vec::new())?;
+        Ok(())
+    }
+
+    #[test]
+    fn split_is_opt_in() {
+        assert!(!Args::try_parse_from(["clog-reader", "-i", "logs.zip"]).unwrap().split);
+        assert!(Args::try_parse_from(["clog-reader", "-i", "logs.zip", "--split"]).unwrap().split);
+    }
+
+    #[test]
+    fn split_groups_archives_and_mmap_by_filename() {
+        for name in ["plugin_async-20261113.glog", "plugin_async.glogmmap"] {
+            assert!(is_plugin_log(&Path::new("nested").join(name)));
+        }
+        for name in ["async-20261113.glog", "async.glogmmap"] {
+            assert!(!is_plugin_log(&Path::new("plugin_directory").join(name)));
+        }
+        for (input, expected) in [
+            ("log_output.txt", "log_output_async.txt"),
+            ("logs/output", "logs/output_async"),
+            ("logs/日志.output.txt", "logs/日志.output_async.txt"),
+        ] {
+            assert_eq!(grouped_output_path(Path::new(input), "async"), Path::new(expected));
+        }
+        assert_eq!(
+            grouped_output_path(Path::new("logs/output.txt"), "plugin_async"),
+            Path::new("logs/output_plugin_async.txt")
+        );
+    }
+
+    #[test]
+    fn collects_main_and_plugin_archives_in_date_order() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("plugin");
+        fs::create_dir(&nested)?;
+        for name in [
+            "async-20261112.glog",
+            "plugin_async-20261110.glog",
+            "插件_async-20261111.glog",
+            "sync-20261112173425699.glog",
+            "async-2026111.glog",
+            "async-202611120.glog",
+            "async-2026abcd.glog",
+            "async-20261112.glog.bak",
+            "plugin_async.glogmmap",
+        ] {
+            File::create(nested.join(name))?;
+        }
+        fs::create_dir(nested.join("async-20261109.glog"))?;
+
+        assert_eq!(
+            get_glog_files(dir.path())?,
+            vec![
+                nested.join("plugin_async-20261110.glog"),
+                nested.join("插件_async-20261111.glog"),
+                nested.join("async-20261112.glog"),
+            ]
+        );
+        assert_eq!(
+            get_mmap_files(dir.path())?,
+            vec![nested.join("plugin_async.glogmmap")]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extracts_date_from_suffix_with_any_prefix() {
+        for name in [
+            "async-20261112.glog",
+            "plugin_async-20261112.glog",
+            "插件_async-20261112.glog",
+            "async-prefix_async-20261112.glog",
+        ] {
+            assert_eq!(extract_date_from_glog_name(Path::new(name)), "20261112");
+        }
+        for name in ["short", "sync-20261112173425699.glog", "async-2026abcd.glog"] {
+            assert!(extract_date_from_glog_name(Path::new(name)).is_empty());
+        }
+    }
 }
 
 /// 获取目录下所有 .glogmmap 文件
@@ -264,11 +449,14 @@ fn get_mmap_files(dir_path: &Path) -> Result<Vec<PathBuf>> {
 /// # Arguments
 /// * `file_path` - 日志文件路径
 /// * `types` - 日志类型过滤器
-/// * `writer` - 输出写入器
+/// * `on_log` - 处理每条解密、解码且符合类型过滤条件的完整日志
 ///
 /// # Returns
 /// 返回读取的日志条数
-fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Result<usize> {
+fn read_logs<F>(file_path: &Path, types: &[i32], mut on_log: F) -> Result<usize>
+where
+    F: FnMut(Log) -> Result<()>,
+{
     let file_path_str = file_path.to_string_lossy().to_string();
 
     // 使用私钥打开日志文件
@@ -294,9 +482,7 @@ fn read_logs<W: Write>(file_path: &Path, types: &[i32], writer: &mut W) -> Resul
                             continue;
                         }
 
-                        // 格式化并写入日志
-                        let formatted = log.format();
-                        writeln!(writer, "{}", formatted)?;
+                        on_log(log)?;
                         log_count += 1;
                     }
                     Err(_) => {

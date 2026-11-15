@@ -47,9 +47,32 @@ clog-reader -i <日志.zip> -t 0,1,2
 # 指定输出文件
 clog-reader -i <日志.zip> -o output.txt
 
+# 合并主进程、插件的归档和缓存，按日志时间戳升序输出
+clog-reader -i <日志.zip> --sort-by-time -o output.txt
+
+# 按主进程和插件分开输出
+clog-reader -i <日志.zip> --split
+
+# 自定义分开输出的目录和文件名
+clog-reader -i <日志.zip> --split -o logs/output.txt
+
 # 显示帮助信息
 clog-reader -h
 ```
+
+默认将所有日志合并到 `log_output.txt`，可通过 `-o` 指定输出路径。
+
+添加 `--split` 后输出两份文件：`log_output_async.txt`（主进程）和
+`log_output_plugin_async.txt`（文件名以 `plugin_` 开头的插件日志）。
+各自包含对应的 `.glog` 归档和 `.glogmmap` 缓存；没有对应日志时也会生成空文件。
+例如 `--split -o logs/output.txt` 会生成 `logs/output_async.txt` 和
+`logs/output_plugin_async.txt`，输出目录需事先存在。
+每次运行会覆盖同名输出文件，默认按源文件处理顺序写入。
+
+合并输出时可添加 `--sort-by-time`，按解密后的每条日志的毫秒 Unix 时间戳升序排序，
+主进程、插件、归档和 mmap 日志统一参与排序。相同时间戳保留原读取顺序，
+多行日志作为完整记录移动；无效时间戳的日志保留在末尾，并给出提示。
+该参数需要在内存中暂存过滤后的全部日志，可配合 `-t` 和 `-o` 使用，不能与 `--split` 同用。
 
 ### 作为库使用
 
